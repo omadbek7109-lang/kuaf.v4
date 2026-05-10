@@ -209,8 +209,12 @@ img { max-width: 100%; }
    REGISTRATION PAGE
    ===================================================== */
 #page-register {
-  position: fixed; inset: 0; z-index: 999;
-  display: flex; align-items: center; justify-content: center;
+  position: absolute;
+  inset: 0;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px;
   overflow-y: auto;
 }
@@ -451,9 +455,10 @@ img { max-width: 100%; }
 /* MAIN CONTENT */
 .main-content {
   flex: 1;
-  overflow-y: auto;
+  overflow-y: scroll;
+  overflow-x: hidden;
   padding-bottom: calc(var(--nav-h) + 16px);
-  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* APP PAGES */
@@ -1543,8 +1548,30 @@ img { max-width: 100%; }
   .stats-row { grid-template-columns: repeat(3, 1fr); }
   .profile-stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
 @media (min-width: 481px) {
   .app, .cart-drawer, .food-modal, .food-form-modal, .bottom-nav, .topbar {
     max-width: 480px;
   }
+}
+
+html,
+body {
+    height: auto !important;
+    min-height: 100%;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+}
+
+.main-content {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    height: auto !important;
+    max-height: none !important;
+}
+
+.app {
+    min-height: 100vh;
+    overflow: visible !important;
 }
