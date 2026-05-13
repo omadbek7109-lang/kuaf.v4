@@ -120,13 +120,13 @@ const FAQS = {
   uz: [
     { q: 'Qanday buyurtma beraman?', a: 'Taomni tanlang, savatga qo\'shing va "Buyurtma berish" tugmasini bosing.' },
     { q: 'Diamonds nima?', a: 'Har 10 000 so\'m sarflashda 1 diamond beriladi. Diamonds bilan roulette o\'ynash mumkin.' },
-    { q: 'Cashback qanday ishlaydi?', a: 'Har bir buyurtmadan belgilangan % cashback hisobingizga o\'tadi.' },
+    { q: 'Cashback qanday ishlaydi?', a: 'Har bir buyurtmadan 3% cashback hisobingizga o\'tadi.' },
     { q: 'Yetkazib berish qoidalari', a: '30-60 daqiqa ichida yetkazib beriladi. Minimal buyurtma 15 000 so\'m.' },
   ],
   ru: [
     { q: 'Как сделать заказ?', a: 'Выберите блюдо, добавьте в корзину и нажмите "Оформить заказ".' },
     { q: 'Что такое Diamonds?', a: 'За каждые 10 000 сум вы получаете 1 diamond. Их можно использовать в рулетке.' },
-    { q: 'Как работает кэшбэк?', a: 'Определённый % от каждого заказа возвращается на ваш счёт.' },
+    { q: 'Как работает кэшбэк?', a: 'С каждого заказа начисляется 3% кэшбэк на ваш счёт.' },
     { q: 'Правила доставки', a: 'Доставка 30-60 минут. Минимальный заказ 15 000 сум.' },
   ],
 };
@@ -344,7 +344,7 @@ function handleRegister() {
     name,
     phone: '+998' + phone,
     diamonds: 10,
-    cashback: 0,
+    cashback: 3,
     level: 1,
     xp: 0,
     orderCount: 0,
@@ -589,7 +589,7 @@ function renderCartDrawer() {
 
   const totalPrice = state.cart.reduce((s, i) => s + i.price * i.qty, 0);
   const diamondEarn = Math.floor(totalPrice / 10000);
-  const cashbackEarn = Math.floor(totalPrice * (state.user?.cashback || 0) / 100);
+  const cashbackEarn = Math.floor(totalPrice * 3 / 100);
 
   document.getElementById('cart-total-price').textContent = formatPrice(totalPrice);
   document.getElementById('cart-diamond-earn').textContent = '+' + diamondEarn;
@@ -638,6 +638,8 @@ function checkout() {
   addDiamonds(diamondsEarned);
   addXP(xpEarned);
   if (state.user) {
+    // Fixed: always 3% cashback, not level-based
+    state.user.cashback = 3;
     state.user.orderCount = (state.user.orderCount || 0) + 1;
     state.totalDiamondsGiven += diamondsEarned;
     save(STORAGE_KEYS.TOTAL_DIAMONDS, state.totalDiamondsGiven);
@@ -653,6 +655,7 @@ function checkout() {
   showToast(`✅ Buyurtma berildi! 💎 +${diamondsEarned} diamonds!`, 'success');
   updateHomeStats();
   renderCartBadge();
+  renderLeaderboard();
 }
 
 /* ===================================================
@@ -681,8 +684,8 @@ function updateLevel() {
     showToast('🎉 Level ' + newLevel + ' ga ko\'tarildingiz!', 'success');
     triggerConfetti();
   }
-  // Cashback based on level
-  state.user.cashback = Math.min(state.user.level * 2, 20);
+  // Fixed: cashback is always 3%, not level-based
+  state.user.cashback = 3;
 }
 
 /* ===================================================
@@ -769,12 +772,28 @@ function spinWheel() {
   const rewards = state.rewards;
   const n = rewards.length;
   const sliceAngle = (2 * Math.PI) / n;
+
+  // Pick a random winner
   const winIdx = Math.floor(Math.random() * n);
 
-  // Calculate target rotation
-  const fullRotations = (5 + Math.floor(Math.random() * 5)) * 2 * Math.PI;
-  const targetOffset = fullRotations + (2 * Math.PI - winIdx * sliceAngle - sliceAngle / 2 - rouletteAngle % (2 * Math.PI));
-  const targetAngle = rouletteAngle + targetOffset;
+  // FIX: Pointer is at top (270° = -π/2 from canvas 0°).
+  // We need winIdx sector to align under the top pointer.
+  // Sector i occupies: [rotationAngle + i*sliceAngle, rotationAngle + (i+1)*sliceAngle]
+  // Center of winning sector must be at -π/2 (top).
+  // So: finalAngle + winIdx*sliceAngle + sliceAngle/2 ≡ -π/2  (mod 2π)
+  // => finalAngle = -π/2 - winIdx*sliceAngle - sliceAngle/2
+  const pointerAngle = -Math.PI / 2;
+  const targetFinalAngle = pointerAngle - winIdx * sliceAngle - sliceAngle / 2;
+
+  // Add several full rotations so the wheel spins visibly
+  const fullSpins = (5 + Math.floor(Math.random() * 5)) * 2 * Math.PI;
+
+  // Normalise current angle to [0, 2π) to avoid drift accumulation
+  const normCurrent = ((rouletteAngle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  // Target in same "frame" plus extra spins
+  const normTarget = ((targetFinalAngle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  const delta = ((normTarget - normCurrent + 2 * Math.PI) % (2 * Math.PI));
+  const targetAngle = rouletteAngle + fullSpins + delta;
 
   const duration = 4000;
   const start = performance.now();
@@ -876,10 +895,17 @@ function renderLeaderboard() {
   const list = document.getElementById('leaderboard-list');
   if (!podium || !list) return;
 
-  // Combine default leaderboard with current user
-  let lb = [...DEFAULT_LEADERBOARD];
+  // Combine default leaderboard with current user (realtime diamonds)
+  let lb = DEFAULT_LEADERBOARD.map(item => ({ ...item }));
   if (state.user) {
-    lb.push({ name: state.user.name, diamonds: state.user.diamonds, orders: state.user.orderCount || 0, isMe: true });
+    const existingIdx = lb.findIndex(u => u.name === state.user.name);
+    if (existingIdx !== -1) {
+      lb[existingIdx].diamonds = state.user.diamonds;
+      lb[existingIdx].orders = state.user.orderCount || 0;
+      lb[existingIdx].isMe = true;
+    } else {
+      lb.push({ name: state.user.name, diamonds: state.user.diamonds, orders: state.user.orderCount || 0, isMe: true });
+    }
   }
   lb.sort((a, b) => b.diamonds - a.diamonds);
   lb = lb.slice(0, 10);
@@ -1209,7 +1235,82 @@ function setLang(lang) {
   });
   updateGreeting();
   renderFAQ();
+  updateUITexts(lang);
   showToast(lang === 'uz' ? 'Til: O\'zbekcha ✅' : 'Язык: Русский ✅', 'success');
+}
+
+/* ===================================================
+   UI TEXTS (i18n patch)
+   =================================================== */
+const UI_TEXTS = {
+  uz: {
+    'greeting-label':    'Nima yeymiz bugun?',
+    'daily-bonus-label': 'Kunlik bonus',
+    'btn-daily-bonus':   '🎁 Olish',
+    'nav-home':          'Bosh sahifa',
+    'nav-roulette':      'Ruletka',
+    'nav-leaderboard':   'Reyting',
+    'nav-profile':       'Profil',
+    'search-placeholder':'Taom qidiring...',
+    'cart-title':        '🛒 Savat',
+    'btn-checkout':      '✅ Buyurtma berish',
+    'cart-diamond-label':'💎 Diamonds',
+    'cart-cashback-label':'💰 Cashback',
+    'spin-cost-label':   '1 💎 = 1 aylanish',
+    'btn-spin':          '🎰 Aylantirish',
+    'lb-title':          '🏆 Reyting',
+    'profile-title':     '👤 Profil',
+    'faq-title':         '❓ Savollar',
+    'btn-logout':        '🚪 Chiqish',
+    'admin-title':       '⚙️ Admin',
+  },
+  ru: {
+    'greeting-label':    'Что будем есть сегодня?',
+    'daily-bonus-label': 'Ежедневный бонус',
+    'btn-daily-bonus':   '🎁 Получить',
+    'nav-home':          'Главная',
+    'nav-roulette':      'Рулетка',
+    'nav-leaderboard':   'Рейтинг',
+    'nav-profile':       'Профиль',
+    'search-placeholder':'Поиск блюд...',
+    'cart-title':        '🛒 Корзина',
+    'btn-checkout':      '✅ Оформить заказ',
+    'cart-diamond-label':'💎 Алмазы',
+    'cart-cashback-label':'💰 Кэшбэк',
+    'spin-cost-label':   '1 💎 = 1 вращение',
+    'btn-spin':          '🎰 Крутить',
+    'lb-title':          '🏆 Рейтинг',
+    'profile-title':     '👤 Профиль',
+    'faq-title':         '❓ Вопросы',
+    'btn-logout':        '🚪 Выйти',
+    'admin-title':       '⚙️ Админ',
+  },
+};
+
+function updateUITexts(lang) {
+  const texts = UI_TEXTS[lang] || UI_TEXTS.uz;
+  Object.entries(texts).forEach(([key, value]) => {
+    // By ID
+    const el = document.getElementById(key);
+    if (el) {
+      if (el.tagName === 'INPUT' && el.placeholder !== undefined) {
+        el.placeholder = value;
+      } else if (el.tagName === 'BUTTON') {
+        el.textContent = value;
+      } else {
+        el.textContent = value;
+      }
+    }
+    // By data-i18n attribute
+    document.querySelectorAll(`[data-i18n="${key}"]`).forEach(node => {
+      if (node.tagName === 'INPUT') node.placeholder = value;
+      else node.textContent = value;
+    });
+  });
+
+  // search input placeholder by id
+  const si = document.getElementById('search-input');
+  if (si) si.placeholder = texts['search-placeholder'] || '';
 }
 
 /* ===================================================
